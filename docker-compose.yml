@@ -1,0 +1,63 @@
+# keylimePi — Pi-hole + Unbound + Jellyfin
+#
+# Runs on Podman (rootful) — see setup.sh. Tailscale is deliberately NOT in here —
+# it runs natively on the host so it can act as a subnet router for your whole
+# home LAN, not just this one box (see docs/04-tailscale-and-remote-dns.md).
+#
+# GPU passthrough for Jellyfin hardware transcoding is added automatically by
+# setup.sh via a generated docker-compose.override.yml if /dev/dri exists on this
+# machine — you shouldn't need to edit this file for that.
+
+services:
+  pihole:
+    image: docker.io/pihole/pihole:latest
+    container_name: pihole
+    hostname: ${HOSTNAME:-keylime-pi}
+    network_mode: host
+    cap_add:
+      - NET_ADMIN   # only needed if you later turn on Pi-hole's DHCP server
+      - SYS_TIME    # lets Pi-hole keep the container clock in sync
+      - SYS_NICE
+    environment:
+      TZ: ${TZ:-UTC}
+      # Pi-hole v6+ config is set via FTLCONF_* env vars (the old WEBPASSWORD/
+      # PIHOLE_DNS_ vars are legacy v5 names and no longer the recommended path).
+      FTLCONF_webserver_api_password: ${PIHOLE_PASSWORD}
+      # Answer queries arriving on any interface (LAN *and* tailscale0), not just
+      # loopback — required because we're on host networking, not a bridge.
+      FTLCONF_dns_listeningMode: all
+      # Send every query Unbound hasn't cached straight to Unbound, which resolves
+      # it recursively from the root servers — no upstream third-party DNS at all.
+      # Reaches Unbound via the host's own loopback (see the unbound service below).
+      FTLCONF_dns_upstreams: 127.0.0.1#5335
+    volumes:
+      - ./data/pihole:/etc/pihole
+    restart: unless-stopped
+
+  unbound:
+    image: docker.io/mvance/unbound:latest
+    container_name: unbound
+    # Host networking, with unbound.conf binding 127.0.0.1:5335 — reachable only
+    # from this machine (which includes Pi-hole, also on host networking), never the
+    # LAN or tailnet. Host networking, rather than a bridge with published ports, is
+    # deliberate: a bridge network makes Podman run aardvark-dns on the bridge
+    # gateway's port 53, which collides with Pi-hole's all-interfaces bind on port 53
+    # and stops Pi-hole's DNS from starting.
+    network_mode: host
+    volumes:
+      - ./config/unbound/unbound.conf:/opt/unbound/etc/unbound/unbound.conf:ro
+      - ./data/unbound:/opt/unbound/etc/unbound/var
+    restart: unless-stopped
+
+  jellyfin:
+    image: docker.io/jellyfin/jellyfin:latest
+    container_name: jellyfin
+    network_mode: host
+    user: "${PUID:-1000}:${PGID:-1000}"
+    environment:
+      TZ: ${TZ:-UTC}
+    volumes:
+      - ./data/jellyfin/config:/config
+      - ./data/jellyfin/cache:/cache
+      - ${MEDIA_PATH:-./media}:/media
+    restart: unless-stopped

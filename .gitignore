@@ -1,0 +1,14 @@
+# Secrets and machine-specific values — never commit these
+.env
+
+# Runtime state (Pi-hole DB, Unbound cache, Jellyfin config/cache)
+data/
+
+# Media library (unless you've deliberately pointed MEDIA_PATH elsewhere)
+media/
+
+# Generated per-machine based on detected hardware (GPU passthrough)
+docker-compose.override.yml
+
+*.log
+.DS_Store
